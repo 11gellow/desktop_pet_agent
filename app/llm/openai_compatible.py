@@ -82,9 +82,8 @@ class OpenAICompatibleClient(LLMClient):
                     json={
                         "model": self.model,
                         "messages": api_messages,
-                        "temperature": self.temperature,
+                        "temperature": 0,
                         "max_tokens": self.max_tokens,
-                        "response_format": {"type": "json_object"},
                     },
                 )
                 http_resp.raise_for_status()
@@ -98,35 +97,6 @@ class OpenAICompatibleClient(LLMClient):
         data = http_resp.json()
         content: str = data["choices"][0]["message"]["content"]
         logger.debug("LLM raw response: %s", content[:300])
-
-        # If response_format json_object produced empty output, retry without it.
-        if not content.strip():
-            logger.warning(
-                "LLM returned empty content with response_format=json_object. "
-                "Retrying without response_format."
-            )
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    http_resp = await client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers={
-                            "Authorization": f"Bearer {self.api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "model": self.model,
-                            "messages": api_messages,
-                            "temperature": self.temperature,
-                            "max_tokens": self.max_tokens,
-                        },
-                    )
-                    http_resp.raise_for_status()
-                data = http_resp.json()
-                content = data["choices"][0]["message"]["content"]
-                logger.debug("Retry raw response: %s", content[:300])
-            except Exception as e:
-                logger.error("Retry also failed: %s", e)
-                return make_safe_response()
 
         return self._parse_response(content)
 
@@ -181,6 +151,7 @@ class OpenAICompatibleClient(LLMClient):
                 continue
 
         # Strategy 4: all JSON parsing failed — wrap raw text as a conversational reply
+        # Detect emotion/face from emoji in the text
         logger.warning(
             "All JSON extraction strategies failed. Using raw text as reply. "
             "Raw (first 200 chars): %s", raw[:200]
@@ -190,14 +161,15 @@ class OpenAICompatibleClient(LLMClient):
             return make_safe_response()
         if len(cleaned) > 500:
             cleaned = cleaned[:497] + "..."
+        emotion, face, action = _infer_emoji_state(cleaned)
         return AgentResponse(
             reply=cleaned,
-            emotion="neutral",
-            face="normal",
-            action="idle",
-            led="off",
-            voice_style="normal",
-            need_hardware=False,
+            emotion=emotion,
+            face=face,
+            action=action,
+            led="warm" if emotion == "happy" else "off",
+            voice_style="cheerful" if emotion in ("happy", "excited") else "normal",
+            need_hardware=emotion != "neutral",
         )
 
     @staticmethod
@@ -234,3 +206,38 @@ class OpenAICompatibleClient(LLMClient):
                 if depth == 0:
                     return text[start : i + 1]
         return None
+
+
+# ---------------------------------------------------------------------------
+# Emoji-based state inference (used by Strategy 4 fallback)
+# ---------------------------------------------------------------------------
+
+_EMOJI_STATE_MAP: dict[str, tuple[str, str, str]] = {
+    "😊": ("happy", "smile", "wave"),
+    "😄": ("happy", "smile", "bounce"),
+    "🥳": ("excited", "smile", "wave"),
+    "🤗": ("happy", "smile", "wave"),
+    "😆": ("excited", "smile", "bounce"),
+    "😍": ("happy", "smile", "wave"),
+    "🥰": ("happy", "smile", "wave"),
+    "😢": ("sad", "frown", "idle"),
+    "😭": ("sad", "frown", "idle"),
+    "🥺": ("sad", "frown", "tilt_head"),
+    "😠": ("angry", "frown", "shake_head"),
+    "😡": ("angry", "frown", "shake_head"),
+    "😲": ("surprised", "surprised", "idle"),
+    "🤔": ("curious", "blink", "tilt_head"),
+    "😴": ("sleepy", "normal", "idle"),
+    "🎉": ("excited", "smile", "bounce"),
+    "✨": ("happy", "smile", "wave"),
+    "💕": ("happy", "smile", "wave"),
+    "👋": ("happy", "smile", "wave"),
+}
+
+
+def _infer_emoji_state(text: str) -> tuple[str, str, str]:
+    """Guess emotion/face/action from emoji in plain text."""
+    for emoji_char, (emotion, face, action) in _EMOJI_STATE_MAP.items():
+        if emoji_char in text:
+            return emotion, face, action
+    return "neutral", "normal", "idle"

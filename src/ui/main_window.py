@@ -1,11 +1,8 @@
 import asyncio
-import sys
 import uuid
 
-import qasync
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QHBoxLayout,
     QLabel,
@@ -21,125 +18,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-try:
-    from src.core.schemas import HardwareEvent
-except ImportError:
-    HardwareEvent = None  # type: ignore
+from app.agent.schemas import HardwareCommand, HardwareEvent
+from src.hardware.simulator import HardwareSimulator
 
 
 # ==========================================
-# 1. 严格对应文档的 核心数据类型 MOCK (用于独立运行预览)
-# ==========================================
-class AgentResponse:
-    def __init__(
-        self,
-        reply="...",
-        emotion="neutral",
-        face="normal",
-        action="idle",
-        led="off",
-        voice_style="normal",
-        need_hardware=False,
-    ):
-        self.reply = reply
-        self.emotion = emotion
-        self.face = face
-        self.action = action
-        self.led = led
-        self.voice_style = voice_style
-        self.need_hardware = need_hardware
-
-    def to_hardware_command(self, cmd_id: str):
-        return {
-            "id": cmd_id,
-            "command": "perform",
-            "payload": {
-                "face": self.face,
-                "action": self.action,
-                "led": self.led,
-                "emotion": self.emotion,
-            },
-        }
-
-
-class CharacterProfile:
-    def __init__(self):
-        self.name = "Pebo"
-        self.personality = "cheerful"
-        self.speaking_style = "casual"
-        self.temperature = 0.8
-
-    def to_system_prompt(self):
-        return f"System Prompt Preview:\nName: {self.name}\nPersonality: {self.personality}"
-
-
-class SimpleMemory:
-    def __init__(self):
-        self._history = []
-
-    def get_history(self):
-        return self._history
-
-    def count(self):
-        return len(self._history)
-
-    def clear(self):
-        self._history.clear()
-
-    def add(self, role, text):
-        self._history.append({"role": role, "text": text})
-
-
-class HardwareSimulator:
-    def __init__(self):
-        self.current_face = "normal"
-        self.current_action = "idle"
-        self.current_led = "off"
-        self.current_emotion = "neutral"
-
-    def get_state(self):
-        return {
-            "face": self.current_face,
-            "action": self.current_action,
-            "led": self.current_led,
-            "emotion": self.current_emotion,
-        }
-
-    async def send_command(self, command):
-        """Apply a command dict to virtual state (mock)."""
-        payload = command.get("payload", {})
-        self.current_face = payload.get("face", self.current_face)
-        self.current_action = payload.get("action", self.current_action)
-        self.current_led = payload.get("led", self.current_led)
-        self.current_emotion = payload.get("emotion", self.current_emotion)
-
-    def inject_event(self, event):
-        pass
-
-    async def connect(self):
-        await asyncio.sleep(0.5)
-
-    async def disconnect(self):
-        await asyncio.sleep(0.1)
-
-
-class AgentEngine:
-    def __init__(self):
-        self.character = CharacterProfile()
-        self.memory = SimpleMemory()
-
-    async def process_user_message(self, user_text: str) -> AgentResponse:
-        await asyncio.sleep(0.8)  # 模拟网络延迟
-        self.memory.add("user", user_text)
-        reply = f"收到：{user_text}。我是 {self.character.name}！"
-        self.memory.add("assistant", reply)
-        return AgentResponse(
-            reply=reply, emotion="excited", face="smile", action="wave"
-        )
-
-
-# ==========================================
-# 2. 全局炫酷现代感 QSS 样式表
+# 1. 全局炫酷现代感 QSS 样式表
 # ==========================================
 MODERN_STYLE = """
 QMainWindow {
@@ -327,7 +211,7 @@ class ChatPage(BasePage):
     page_title = "Chat"
 
     def __init__(
-        self, agent_engine: AgentEngine, hardware: HardwareSimulator, parent=None
+        self, agent_engine: object, hardware: HardwareSimulator, parent=None
     ):
         self._agent = agent_engine
         self._hardware = hardware
@@ -470,11 +354,14 @@ class ChatPage(BasePage):
     def _scroll_to_bottom(self):
         """Auto-scroll the chat to the latest message.
 
-        Uses QTimer.singleShot(0) to defer until after Qt finishes layout.
-        Otherwise bar.maximum() may return the old value.
+        Uses QTimer.singleShot(50) to defer until after Qt finishes layout.
+        adjustSize() forces the scroll widget to recalculate before scrolling.
         """
         if hasattr(self, '_scroll') and self._scroll:
-            QTimer.singleShot(0, self._do_scroll)
+            w = self._scroll.widget()
+            if w:
+                w.adjustSize()
+            QTimer.singleShot(50, self._do_scroll)
 
     def _do_scroll(self):
         """Execute the actual scroll (called deferred)."""
@@ -523,7 +410,7 @@ class CharacterSettingsPage(BasePage):
 
     page_title = "角色"
 
-    def __init__(self, agent_engine: AgentEngine, parent=None):
+    def __init__(self, agent_engine: object, parent=None):
         self._agent = agent_engine
         super().__init__(parent)
 
@@ -651,7 +538,7 @@ class HardwareSimulatorPage(BasePage):
 class MemoryPage(BasePage):
     page_title = "记忆"
 
-    def __init__(self, agent_engine: AgentEngine, parent=None):
+    def __init__(self, agent_engine: object, parent=None):
         self._agent = agent_engine
         super().__init__(parent)
 
@@ -724,7 +611,7 @@ class MainWindow(QMainWindow):
     """
 
     def __init__(
-        self, agent_engine: AgentEngine, hardware: HardwareSimulator, voice=None
+        self, agent_engine: object, hardware: HardwareSimulator, voice=None
     ):
         super().__init__()
         self.voice = voice
@@ -778,28 +665,3 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
 
         self.setCentralWidget(splitter)
-
-
-# ==========================================
-# 6. 系统入口初始化 (含事件循环合并)
-# ==========================================
-def main():
-    app = QApplication(sys.argv)
-
-    # 结合 Qt 和 asyncio 核心机制
-    loop = qasync.QEventLoop(app)
-    asyncio.set_event_loop(loop)
-
-    # 模拟 Application 组装后端组件并注入
-    mock_hardware = HardwareSimulator()
-    mock_agent = AgentEngine()
-
-    main_win = MainWindow(agent_engine=mock_agent, hardware=mock_hardware)
-    main_win.show()
-
-    with loop:
-        loop.run_forever()
-
-
-if __name__ == "__main__":
-    main()

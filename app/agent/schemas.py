@@ -111,6 +111,18 @@ class HardwareCommand(BaseModel):
     )
 
 
+class HardwareEvent(BaseModel):
+    """Event reported from hardware back to PC."""
+
+    type: Literal["event"] = "event"
+    id: str = Field(default="", description="Event id, or cmd id if this is an ack.")
+    event: str = Field(..., description="Event type: ack, touch, shake, button, sensor.")
+    payload: dict[str, str] = Field(
+        default_factory=dict,
+        description="Event payload, e.g. {sensor: touch_head, value: 1}.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Chat message
 # ---------------------------------------------------------------------------

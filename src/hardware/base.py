@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.core.schemas import HardwareCommand, HardwareEvent
+from app.agent.schemas import HardwareCommand, HardwareEvent
 
 
 class BaseHardware(ABC):

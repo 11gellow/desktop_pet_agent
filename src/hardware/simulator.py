@@ -13,7 +13,7 @@ TODO (future):
 
 from __future__ import annotations
 
-from src.core.schemas import HardwareCommand, HardwareEvent
+from app.agent.schemas import HardwareCommand, HardwareEvent
 from src.hardware.base import BaseHardware
 
 
